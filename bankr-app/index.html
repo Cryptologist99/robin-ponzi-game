@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    :root {
+      --primary: #00ff00;
+      --danger: #ff4444;
+      --bg: #050505;
+      --card-bg: #111;
+    }
+    body { 
+      background: var(--bg); 
+      color: var(--primary); 
+      font-family: 'Courier New', monospace; 
+      padding: 20px; 
+      margin: 0;
+      text-transform: uppercase;
+    }
+    .container { max-width: 800px; margin: 0 auto; }
+    h1 { 
+      text-align: center; 
+      font-size: 2.5rem; 
+      text-shadow: 0 0 10px var(--primary);
+      margin-bottom: 30px;
+    }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-bottom: 30px;
+    }
+    .stat-card {
+      background: var(--card-bg);
+      border: 2px solid var(--primary);
+      padding: 20px;
+      text-align: center;
+      box-shadow: 5px 5px 0px var(--primary);
+    }
+    .stat-value { font-size: 1.8rem; font-weight: bold; margin-top: 10px; }
+    .card { 
+      background: var(--card-bg);
+      border: 1px solid var(--primary); 
+      padding: 20px; 
+      margin-bottom: 20px; 
+      position: relative;
+    }
+    .card h3 { margin-top: 0; border-bottom: 1px solid var(--primary); padding-bottom: 10px; }
+    .rich { color: var(--danger); }
+    .poor { color: var(--primary); }
+    .holder-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 8px 0;
+      border-bottom: 1px solid #222;
+    }
+    .holder-row:last-child { border-bottom: none; }
+    .btn { 
+      background: var(--primary); 
+      color: #000; 
+      border: none; 
+      padding: 15px 30px; 
+      cursor: pointer; 
+      font-weight: bold; 
+      width: 100%;
+      font-size: 1.2rem;
+      transition: all 0.2s;
+    }
+    .btn:hover { 
+      background: #00cc00;
+      box-shadow: 0 0 20px var(--primary);
+    }
+    .glitch { animation: glitch 1s linear infinite; }
+    @keyframes glitch {
+      2%, 64% { transform: translate(2px,0) skew(0deg); }
+      4%, 60% { transform: translate(-2px,0) skew(0deg); }
+      62% { transform: translate(0,0) skew(5deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1 class="glitch">$Robin: Wealth Inequity Scanner</h1>
+    
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div>Total Stolen</div>
+        <div id="total-stolen" class="stat-value rich">0</div>
+      </div>
+      <div class="stat-card">
+        <div>Total Redistributed</div>
+        <div id="total-redistributed" class="stat-value poor">0</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Top Wallets (Tax Targets)</h3>
+      <div id="rich-list"></div>
+    </div>
+
+    <div class="card">
+      <h3>Smallest Holders (Yield Recipients)</h3>
+      <div id="poor-list"></div>
+    </div>
+
+    <button class="btn" onclick="refresh()">Execute Wealth Redistribution</button>
+    <div id="status" style="margin-top: 10px; text-align: center; font-size: 0.8rem;"></div>
+  </div>
+
+  <script>
+    function formatNum(n) {
+      return new Intl.NumberFormat().format(Math.floor(n));
+    }
+
+    async function refresh() {
+      document.getElementById('status').innerText = 'RECALIBRATING WEALTH...';
+      try {
+        const data = await bankr.invokeScript('refresh');
+        render(data);
+      } catch (e) {
+        document.getElementById('status').innerText = 'SCAN FAILED: ' + e.message;
+      }
+    }
+
+    function render(data) {
+      document.getElementById('status').innerText = 'LAST SCAN: ' + new Date(data.updatedAt).toLocaleTimeString();
+      document.getElementById('total-stolen').innerText = formatNum(data.totalStolen);
+      document.getElementById('total-redistributed').innerText = formatNum(data.totalRedistributed);
+      
+      const richList = document.getElementById('rich-list');
+      richList.innerHTML = data.topHolders.map(h => `
+        <div class="holder-row">
+          <span class="rich">${h.address}</span>
+          <span>${formatNum(h.balance)} $ROBIN</span>
+          <span class="rich">-${formatNum(h.tax)} (TAX)</span>
+        </div>
+      `).join('');
+      
+      const poorList = document.getElementById('poor-list');
+      poorList.innerHTML = data.bottomHolders.map(h => `
+        <div class="holder-row">
+          <span class="poor">${h.address}</span>
+          <span>${formatNum(h.balance)} $ROBIN</span>
+          <span class="poor">+${formatNum(h.yield)} (YIELD)</span>
+        </div>
+      `).join('');
+    }
+
+    bankr.on('ready', async () => {
+      const snap = await bankr.appKV.get('robin_snapshot');
+      if (snap) render(snap);
+      else refresh();
+    });
+  </script>
+</body>
+</html>
