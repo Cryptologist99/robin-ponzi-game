@@ -1,0 +1,50 @@
+{
+  "slug": "robin-ponzi-game",
+  "title": "$Robin Ponzi Game",
+  "description": "A ponzi game for $Robin on Robinhood Chain. Taxes the rich to feed the poor.",
+  "tags": ["ponzi", "game", "robinhood"],
+  "permissions": ["read:chain", "read:appdata", "write:appdata"],
+  "scripts": ["refresh"],
+  "publicScripts": [],
+  "publicScriptLimits": {},
+  "assets": [],
+  "publicDataKeys": ["robin_snapshot", "robin_stats"],
+  "secrets": [],
+  "schedule": [],
+  "frontendIdentity": "owner",
+  "dataSchemas": {
+    "robin_snapshot": {
+      "type": "object",
+      "properties": {
+        "topHolders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "address": { "type": "string" },
+              "balance": { "type": "number" },
+              "tax": { "type": "number" }
+            },
+            "required": ["address", "balance", "tax"]
+          }
+        },
+        "bottomHolders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "address": { "type": "string" },
+              "balance": { "type": "number" },
+              "yield": { "type": "number" }
+            },
+            "required": ["address", "balance", "yield"]
+          }
+        },
+        "totalStolen": { "type": "number" },
+        "totalRedistributed": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["topHolders", "bottomHolders", "totalStolen", "totalRedistributed", "updatedAt"]
+    }
+  }
+}
