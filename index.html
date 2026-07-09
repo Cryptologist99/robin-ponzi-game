@@ -56,8 +56,12 @@
       padding: 8px 0;
       border-bottom: 1px solid #222;
       font-size: 0.85rem;
+      align-items: center;
     }
     .holder-row:last-child { border-bottom: none; }
+    .holder-row .addr { flex: 1; text-align: left; }
+    .holder-row .bal { flex: 1; text-align: center; }
+    .holder-row .delta { flex: 1; text-align: right; }
     .btn {
       background: var(--primary);
       color: #000;
@@ -73,12 +77,41 @@
       background: #00cc00;
       box-shadow: 0 0 20px var(--primary);
     }
+    .btn:active { transform: scale(0.98); }
     .glitch { animation: glitch 1s linear infinite; }
     @keyframes glitch {
       2%, 64% { transform: translate(2px,0) skew(0deg); }
       4%, 60% { transform: translate(-2px,0) skew(0deg); }
       62% { transform: translate(0,0) skew(5deg); }
     }
+    .gini-bar {
+      width: 100%;
+      height: 12px;
+      background: #222;
+      border: 1px solid var(--primary);
+      margin-top: 8px;
+      overflow: hidden;
+    }
+    .gini-fill {
+      height: 100%;
+      background: var(--danger);
+      transition: width 0.5s ease;
+    }
+    .controls {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    .btn-secondary {
+      background: transparent;
+      color: var(--primary);
+      border: 1px solid var(--primary);
+      padding: 10px 20px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      flex: 1;
+    }
+    .btn-secondary:hover { background: #1a1a1a; }
   </style>
 </head>
 <body>
@@ -97,84 +130,159 @@
     </div>
 
     <div class="card">
-      <h3>Top Wallets (Tax Targets)</h3>
+      <h3>Gini Coefficient (Inequality Index)</h3>
+      <div id="gini-value" class="stat-value" style="font-size: 1.4rem;">0.000</div>
+      <div class="gini-bar"><div id="gini-fill" class="gini-fill" style="width: 0%"></div></div>
+      <div style="font-size: 0.7rem; margin-top: 6px; color: #555;">0 = PERFECT EQUALITY · 1 = MAX INEQUALITY</div>
+    </div>
+
+    <div class="card">
+      <h3>Top Wallets (Tax Targets — Top 1%)</h3>
       <div id="rich-list"></div>
     </div>
 
     <div class="card">
-      <h3>Smallest Holders (Yield Recipients)</h3>
+      <h3>Bottom 50% (Yield Recipients)</h3>
       <div id="poor-list"></div>
     </div>
 
-    <button class="btn" onclick="refresh()">Execute Wealth Redistribution</button>
+    <div class="controls">
+      <button class="btn-secondary" onclick="resetState()">RESET SIMULATION</button>
+    </div>
+
+    <button class="btn" onclick="refresh()">EXECUTE WEALTH REDISTRIBUTION</button>
     <div id="status" style="margin-top: 10px; text-align: center; font-size: 0.8rem;"></div>
+    <div id="tick-count" style="margin-top: 5px; text-align: center; font-size: 0.7rem; color: #555;"></div>
   </div>
 
   <script>
     // ---- standalone runtime (no bankr dependency) ----
-    const STORAGE_KEY = 'robin_stats';
-    const SNAPSHOT_KEY = 'robin_snapshot';
+    const STORAGE_KEY = 'robin_state_v2';
 
-    // mock holder data (mirrors refresh.ts)
-    const mockHolders = [
-      { address: '0x4f72...99c1', balance: 1250000000 },
-      { address: '0xdead...beef', balance: 850000000 },
-      { address: '0xcafe...babe', balance: 420000000 },
-      { address: '0x1234...5678', balance: 5000 },
-      { address: '0xabcd...efgh', balance: 1200 }
+    // initial mock holder data — 10 holders with skewed distribution
+    const INITIAL_HOLDERS = [
+      { address: '0x4f72...99c1', balance: 1500000000 },
+      { address: '0xdead...beef', balance: 980000000 },
+      { address: '0xcafe...babe', balance: 620000000 },
+      { address: '0xbeef...dead', balance: 310000000 },
+      { address: '0xface...feed', balance: 120000000 },
+      { address: '0x1234...5678', balance: 45000000 },
+      { address: '0xabcd...ef01', balance: 12000000 },
+      { address: '0x9999...8888', balance: 3500000 },
+      { address: '0x7777...6666', balance: 800000 },
+      { address: '0x5555...4444', balance: 50000 }
     ];
 
-    function loadStats() {
+    // tax rate per click on each top holder
+    const TAX_RATE = 0.01; // 1% per redistribution tick
+
+    function loadState() {
       const raw = localStorage.getItem(STORAGE_KEY);
-      return raw ? JSON.parse(raw) : { totalStolen: 0, totalRedistributed: 0 };
+      if (raw) {
+        try { return JSON.parse(raw); } catch(e) { /* fall through */ }
+      }
+      return {
+        holders: JSON.parse(JSON.stringify(INITIAL_HOLDERS)),
+        totalStolen: 0,
+        totalRedistributed: 0,
+        ticks: 0
+      };
     }
 
-    function saveStats(stats) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(stats));
+    function saveState(state) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     }
 
-    function loadSnapshot() {
-      const raw = localStorage.getItem(SNAPSHOT_KEY);
-      return raw ? JSON.parse(raw) : null;
+    // compute gini coefficient: 0 = perfect equality, 1 = max inequality
+    function gini(balances) {
+      const sorted = [...balances].sort((a, b) => a - b);
+      const n = sorted.length;
+      if (n === 0) return 0;
+      const sum = sorted.reduce((a, b) => a + b, 0);
+      if (sum === 0) return 0;
+      let cumSum = 0;
+      let weightedSum = 0;
+      for (let i = 0; i < n; i++) {
+        cumSum += sorted[i];
+        weightedSum += (i + 1) * sorted[i];
+      }
+      return (2 * weightedSum) / (n * sum) - (n + 1) / n;
     }
 
-    function saveSnapshot(snap) {
-      localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snap));
-    }
-
-    // mirrors the refresh.ts server script logic
+    // core redistribution logic — mutates holder balances in place
     function runRefresh() {
-      const stats = loadStats();
+      const state = loadState();
+      const holders = state.holders;
 
-      const sorted = [...mockHolders].sort((a, b) => b.balance - a.balance);
-      const top = sorted.slice(0, 3).map(h => ({
+      // sort descending by balance to identify top vs bottom
+      const sorted = [...holders].sort((a, b) => b.balance - a.balance);
+
+      // top 1% = top holder(s). with 10 holders, top 1 is the whale.
+      // use ceil to always tax at least the #1 holder
+      const topCount = Math.max(1, Math.ceil(sorted.length * 0.01));
+      const topHolders = sorted.slice(0, topCount);
+
+      // bottom 50% = bottom half of holders
+      const bottomCount = Math.floor(sorted.length * 0.5);
+      const bottomHolders = sorted.slice(-bottomCount);
+
+      // calculate tax from each top holder
+      let totalTax = 0;
+      const taxes = {};
+      for (const h of topHolders) {
+        const tax = Math.floor(h.balance * TAX_RATE);
+        taxes[h.address] = tax;
+        totalTax += tax;
+      }
+
+      // distribute tax equally among bottom 50%
+      const sharePerRecipient = bottomHolders.length > 0
+        ? Math.floor(totalTax / bottomHolders.length)
+        : 0;
+      const yields = {};
+      for (const h of bottomHolders) {
+        yields[h.address] = sharePerRecipient;
+      }
+
+      // apply mutations to the actual holder objects
+      for (const h of holders) {
+        if (taxes[h.address] !== undefined) {
+          h.balance -= taxes[h.address];
+        }
+        if (yields[h.address] !== undefined) {
+          h.balance += yields[h.address];
+        }
+      }
+
+      // update cumulative stats
+      state.totalStolen += totalTax;
+      state.totalRedistributed += totalTax;
+      state.ticks += 1;
+      saveState(state);
+
+      // build snapshot for rendering (re-sort after mutation to show churn)
+      const postSorted = [...holders].sort((a, b) => b.balance - a.balance);
+      const postTop = postSorted.slice(0, topCount).map(h => ({
         address: h.address,
         balance: h.balance,
-        tax: Math.floor(h.balance * 0.01)
+        tax: taxes[h.address] || 0
       }));
-
-      const bottom = sorted.slice(-2).map(h => ({
+      const postBottom = postSorted.slice(-bottomCount).map(h => ({
         address: h.address,
         balance: h.balance,
-        yield: Math.floor(top[0].tax / 2)
+        yield: yields[h.address] || 0
       }));
 
-      const sessionStolen = top.reduce((acc, h) => acc + h.tax, 0);
-      stats.totalStolen += sessionStolen;
-      stats.totalRedistributed += sessionStolen;
-
-      saveStats(stats);
-
-      const snapshot = {
-        topHolders: top,
-        bottomHolders: bottom,
-        totalStolen: stats.totalStolen,
-        totalRedistributed: stats.totalRedistributed,
+      return {
+        topHolders: postTop,
+        bottomHolders: postBottom,
+        totalStolen: state.totalStolen,
+        totalRedistributed: state.totalRedistributed,
+        ticks: state.ticks,
+        gini: gini(holders.map(h => h.balance)),
+        allHolders: postSorted,
         updatedAt: Date.now()
       };
-
-      saveSnapshot(snapshot);
-      return snapshot;
     }
 
     // ---- UI ----
@@ -183,25 +291,36 @@
     }
 
     function render(data) {
-      document.getElementById('status').innerText = 'LAST SCAN: ' + new Date(data.updatedAt).toLocaleTimeString();
+      document.getElementById('status').innerText =
+        'LAST REDISTRIBUTION: ' + new Date(data.updatedAt).toLocaleTimeString();
+      document.getElementById('tick-count').innerText =
+        'TICK #' + data.ticks + ' · ' + data.allHolders.length + ' HOLDERS';
+
       document.getElementById('total-stolen').innerText = formatNum(data.totalStolen);
       document.getElementById('total-redistributed').innerText = formatNum(data.totalRedistributed);
 
+      // gini
+      const giniPct = (data.gini * 100).toFixed(1);
+      document.getElementById('gini-value').innerText = data.gini.toFixed(3);
+      document.getElementById('gini-fill').style.width = giniPct + '%';
+
+      // top holders (tax targets)
       const richList = document.getElementById('rich-list');
       richList.innerHTML = data.topHolders.map(h => `
         <div class="holder-row">
-          <span class="rich">${h.address}</span>
-          <span>${formatNum(h.balance)} $ROBIN</span>
-          <span class="rich">-${formatNum(h.tax)} (TAX)</span>
+          <span class="addr rich">${h.address}</span>
+          <span class="bal">${formatNum(h.balance)} $ROBIN</span>
+          <span class="delta rich">-${formatNum(h.tax)}</span>
         </div>
       `).join('');
 
+      // bottom 50% (yield recipients)
       const poorList = document.getElementById('poor-list');
       poorList.innerHTML = data.bottomHolders.map(h => `
         <div class="holder-row">
-          <span class="poor">${h.address}</span>
-          <span>${formatNum(h.balance)} $ROBIN</span>
-          <span class="poor">+${formatNum(h.yield)} (YIELD)</span>
+          <span class="addr poor">${h.address}</span>
+          <span class="bal">${formatNum(h.balance)} $ROBIN</span>
+          <span class="delta poor">+${formatNum(h.yield)}</span>
         </div>
       `).join('');
     }
@@ -216,11 +335,33 @@
       }
     }
 
+    function resetState() {
+      localStorage.removeItem(STORAGE_KEY);
+      refresh();
+    }
+
     // init on load
     (function init() {
-      const snap = loadSnapshot();
-      if (snap) render(snap);
-      else refresh();
+      const state = loadState();
+      // render current state without running a new tick
+      const sorted = [...state.holders].sort((a, b) => b.balance - a.balance);
+      const topCount = Math.max(1, Math.ceil(sorted.length * 0.01));
+      const bottomCount = Math.floor(sorted.length * 0.5);
+      const snapshot = {
+        topHolders: sorted.slice(0, topCount).map(h => ({
+          address: h.address, balance: h.balance, tax: 0
+        })),
+        bottomHolders: sorted.slice(-bottomCount).map(h => ({
+          address: h.address, balance: h.balance, yield: 0
+        })),
+        totalStolen: state.totalStolen,
+        totalRedistributed: state.totalRedistributed,
+        ticks: state.ticks,
+        gini: gini(state.holders.map(h => h.balance)),
+        allHolders: sorted,
+        updatedAt: Date.now()
+      };
+      render(snapshot);
     })();
   </script>
 </body>
